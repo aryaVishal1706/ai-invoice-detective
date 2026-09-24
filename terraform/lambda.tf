@@ -35,6 +35,17 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
+# ── Placeholder zip so Lambda can be created before first deploy ─────────────
+resource "aws_s3_object" "lambda_placeholder" {
+  bucket  = aws_s3_bucket.lambda_bucket.id
+  key     = "lambda.zip"
+  content = "placeholder"
+
+  lifecycle {
+    ignore_changes = [content, etag]   # don't overwrite after real deploy
+  }
+}
+
 # ── Lambda Function ──────────────────────────────────────────────────────────
 resource "aws_lambda_function" "api" {
   function_name = "${var.project}-api"
@@ -58,7 +69,7 @@ resource "aws_lambda_function" "api" {
     }
   }
 
-  depends_on = [aws_iam_role_policy.lambda_policy]
+  depends_on = [aws_iam_role_policy.lambda_policy, aws_s3_object.lambda_placeholder]
 }
 
 output "lambda_function_name" {
