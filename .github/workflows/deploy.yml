@@ -33,23 +33,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Build lambda.zip — code only (dependencies go in Lambda Layer)
-      - name: Build lambda.zip (code only)
+      # Build lambda.zip — code only (no heavy deps)
+      - name: Build lambda.zip (API code only)
         run: |
           mkdir -p package
           cp -r api core models main.py lambda_handler.py package/
           cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
-          echo "lambda.zip size: $(du -sh lambda.zip | cut -f1)"
+          echo "lambda.zip: $(du -sh lambda.zip | cut -f1)"
 
-      # Build Lambda Layer — heavy dependencies only
-      - name: Build Lambda Layer
+      # Build ml_lambda.zip — ML code + scikit-learn deps
+      - name: Build ml_lambda.zip (ML code + dependencies)
         run: |
-          mkdir -p layer/python
-          pip install scikit-learn pandas numpy groq rapidfuzz fastapi mangum \
-            pydantic python-dotenv boto3 python-multipart uvicorn \
-            -t layer/python/ --quiet
-          cd layer && zip -r ../dependencies-layer.zip python/ -x "*.pyc" && cd ..
-          echo "Layer size: $(du -sh dependencies-layer.zip | cut -f1)"
+          mkdir -p ml_package
+          pip install scikit-learn pandas numpy -t ml_package/ --quiet
+          cp ml_lambda_handler.py ml_package/
+          cd ml_package && zip -r ../ml_lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
+          echo "ml_lambda.zip: $(du -sh ml_lambda.zip | cut -f1)"
 
       # Upload zip to S3 (bucket may not exist yet — terraform creates it first)
       - uses: hashicorp/setup-terraform@v3
@@ -76,12 +75,15 @@ jobs:
             -target=aws_iam_role_policy.lambda_policy
         working-directory: terraform
 
-      # Now upload real zip + layer to S3 (bucket exists now)
-      - name: Upload lambda.zip and layer to S3
+      # Now upload both zips + model assets to S3
+      - name: Upload zips and model to S3
         run: |
           BUCKET=$(cd terraform && terraform output -raw lambda_bucket_name)
-          aws s3 cp lambda.zip s3://$BUCKET/lambda.zip
-          aws s3 cp dependencies-layer.zip s3://$BUCKET/dependencies-layer.zip
+          MODEL_BUCKET=$(cd terraform && terraform output -raw model_bucket_name)
+          aws s3 cp lambda.zip    s3://$BUCKET/lambda.zip
+          aws s3 cp ml_lambda.zip s3://$BUCKET/ml_lambda.zip
+          aws s3 cp models/trained/isolation_forest.pkl s3://$MODEL_BUCKET/isolation_forest.pkl
+          aws s3 cp data/raw/vendor_stats.json          s3://$MODEL_BUCKET/vendor_stats.json
 
       # Now apply everything including Lambda (zip is in S3)
       - name: Terraform Apply — full
@@ -115,16 +117,30 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Build and deploy lambda.zip
+      - name: Build and deploy both Lambdas
         run: |
+          # API Lambda (code only — tiny)
           mkdir -p package
           cp -r api core models main.py lambda_handler.py package/
           cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
-          aws s3 cp lambda.zip s3://${{ needs.terraform.outputs.lambda_bucket }}/lambda.zip
+
+          # ML Lambda (scikit-learn + ml code)
+          mkdir -p ml_package
+          pip install scikit-learn pandas numpy -t ml_package/ --quiet
+          cp ml_lambda_handler.py ml_package/
+          cd ml_package && zip -r ../ml_lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
+
+          BUCKET=${{ needs.terraform.outputs.lambda_bucket }}
+          aws s3 cp lambda.zip    s3://$BUCKET/lambda.zip
+          aws s3 cp ml_lambda.zip s3://$BUCKET/ml_lambda.zip
+
           aws lambda update-function-code \
             --function-name ${{ env.LAMBDA_FUNCTION }} \
-            --s3-bucket ${{ needs.terraform.outputs.lambda_bucket }} \
-            --s3-key lambda.zip
+            --s3-bucket $BUCKET --s3-key lambda.zip
+
+          aws lambda update-function-code \
+            --function-name ${{ env.LAMBDA_FUNCTION }}-ml \
+            --s3-bucket $BUCKET --s3-key ml_lambda.zip
 
       - name: Upload ML model
         run: |

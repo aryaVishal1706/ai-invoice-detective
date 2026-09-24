@@ -85,12 +85,64 @@ def load_model() -> dict:
 
 def score_invoice(invoice: dict, artifact: dict, vendor_stats: dict) -> int:
     """
-    Score a single invoice using IsolationForest.
-    Returns anomaly score 0–100 (higher = more anomalous).
+    Score invoice — calls ML Lambda if running on AWS, runs locally otherwise.
+    Returns anomaly score 0–100.
     """
+    import os
+    ml_function = os.environ.get("ML_LAMBDA_FUNCTION")
+
+    if ml_function:
+        # Running on AWS — invoke ML Lambda
+        import boto3, json
+        client   = boto3.client("lambda", region_name="ap-south-1")
+        response = client.invoke(
+            FunctionName=ml_function,
+            InvocationType="RequestResponse",
+            Payload=json.dumps({"invoice": invoice})
+        )
+        result = json.loads(response["Payload"].read())
+        return result.get("score", 50)
+
+    # Running locally — score directly
+    vendor        = invoice["vendor_name"]
+    amount        = invoice["amount"]
+    vendor_avg_amt = vendor_stats.get(vendor, {}).get("avg_amount", amount)
+    vendor_std_amt = vendor_stats.get(vendor, {}).get("std_amount", 1) or 1
+    amount_vs_avg  = amount / vendor_avg_amt if vendor_avg_amt > 0 else 1.0
+    amount_zscore  = (amount - vendor_avg_amt) / vendor_std_amt
+
+    try:
+        inv_dt = pd.to_datetime(invoice["invoice_date"])
+        sub_dt = pd.to_datetime(invoice["submission_date"])
+        submission_lag = (sub_dt - inv_dt).days
+        is_weekend = 1 if inv_dt.weekday() >= 5 else 0
+        is_future  = 1 if inv_dt > pd.Timestamp.today() else 0
+    except Exception:
+        submission_lag = 0
+        is_weekend = 0
+        is_future  = 0
+
+    expected_tax  = amount * 0.18
+    tax_deviation = abs(invoice.get("tax_amount", expected_tax) - expected_tax) / max(expected_tax, 1)
+    missing_po    = 1 if not invoice.get("po_number") else 0
+    missing_gstin = 1 if not invoice.get("vendor_gstin") else 0
+    is_round      = 1 if amount % 10000 == 0 else 0
+
     model      = artifact["model"]
     score_min  = artifact["score_min"]
     score_max  = artifact["score_max"]
+
+    features = pd.DataFrame([[
+        amount, submission_lag, amount_vs_avg, amount_zscore,
+        vendor_stats.get(vendor, {}).get("monthly_freq", 1),
+        tax_deviation, is_weekend, is_future, missing_po, missing_gstin, is_round
+    ]], columns=["amount", "submission_lag", "amount_vs_vendor_avg", "amount_zscore",
+                 "vendor_monthly_freq", "tax_deviation", "is_weekend", "is_future",
+                 "missing_po", "missing_gstin", "is_round"])
+
+    raw_score   = model.decision_function(features)[0]
+    score_range = score_max - score_min if score_max != score_min else 1
+    return int(np.clip((1 - (raw_score - score_min) / score_range) * 100, 0, 100))
     vendor = invoice["vendor_name"]
     amount = invoice["amount"]
 
