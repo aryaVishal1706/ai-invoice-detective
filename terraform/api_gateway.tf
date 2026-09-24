@@ -4,12 +4,9 @@ resource "aws_apigatewayv2_api" "api" {
   protocol_type = "HTTP"
 
   cors_configuration {
-    allow_origins = [
-      "http://ai-invoice-detective-frontend-723146859876.s3-website.ap-south-1.amazonaws.com",
-      "http://localhost:5173"
-    ]
+    allow_origins = ["*"]
     allow_methods = ["GET", "POST", "OPTIONS"]
-    allow_headers = ["Content-Type"]
+    allow_headers = ["Content-Type", "Authorization"]
     max_age       = 300
   }
 }
