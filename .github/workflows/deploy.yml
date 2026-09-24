@@ -75,13 +75,27 @@ jobs:
             -target=aws_iam_role_policy.lambda_policy
         working-directory: terraform
 
-      # Now upload both zips + model assets to S3
+      # Train model if not present, then upload assets to S3
       - name: Upload zips and model to S3
         run: |
           BUCKET=$(cd terraform && terraform output -raw lambda_bucket_name)
           MODEL_BUCKET=$(cd terraform && terraform output -raw model_bucket_name)
           aws s3 cp lambda.zip    s3://$BUCKET/lambda.zip
           aws s3 cp ml_lambda.zip s3://$BUCKET/ml_lambda.zip
+
+          # Train model if pkl not in repo
+          if [ ! -f models/trained/isolation_forest.pkl ]; then
+            pip install scikit-learn pandas numpy -q
+            mkdir -p models/trained
+            PYTHONPATH=. python3 -c "from core.anomaly.detector import train_model; train_model()"
+          fi
+
+          # Generate vendor stats if not present
+          if [ ! -f data/raw/vendor_stats.json ]; then
+            pip install scikit-learn pandas numpy -q
+            PYTHONPATH=. python3 scripts/export_vendor_stats.py
+          fi
+
           aws s3 cp models/trained/isolation_forest.pkl s3://$MODEL_BUCKET/isolation_forest.pkl
           aws s3 cp data/raw/vendor_stats.json          s3://$MODEL_BUCKET/vendor_stats.json
 
