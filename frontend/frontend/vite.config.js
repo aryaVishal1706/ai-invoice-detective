@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/invoice': 'http://localhost:8000'
+      '/invoice': 'http://localhost:8000'   // local dev only
     }
   }
 })

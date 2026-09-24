@@ -8,6 +8,8 @@ const EMPTY = {
   po_number: '', bank_account: '', payment_terms: 'Net 30'
 }
 
+const API = import.meta.env.VITE_API_URL || ''
+
 export default function Analyze({ onResult }) {
   const [form, setForm]     = useState(EMPTY)
   const [report, setReport] = useState(null)
@@ -28,7 +30,7 @@ export default function Analyze({ onResult }) {
         po_number:     form.po_number     || null,
         payment_terms: form.payment_terms || null,
       }
-      const res = await fetch('/invoice/analyze', {
+      const res = await fetch(`${API}/invoice/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
