@@ -33,12 +33,23 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Build real lambda.zip BEFORE terraform runs
-      - name: Build lambda.zip
+      # Build lambda.zip — code only (dependencies go in Lambda Layer)
+      - name: Build lambda.zip (code only)
         run: |
-          pip install -r requirements.txt -t package/ --quiet
+          mkdir -p package
           cp -r api core models main.py lambda_handler.py package/
-          cd package && zip -r ../lambda.zip . -x "*.pyc" && cd ..
+          cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
+          echo "lambda.zip size: $(du -sh lambda.zip | cut -f1)"
+
+      # Build Lambda Layer — heavy dependencies only
+      - name: Build Lambda Layer
+        run: |
+          mkdir -p layer/python
+          pip install scikit-learn pandas numpy groq rapidfuzz fastapi mangum \
+            pydantic python-dotenv boto3 python-multipart uvicorn \
+            -t layer/python/ --quiet
+          cd layer && zip -r ../dependencies-layer.zip python/ -x "*.pyc" && cd ..
+          echo "Layer size: $(du -sh dependencies-layer.zip | cut -f1)"
 
       # Upload zip to S3 (bucket may not exist yet — terraform creates it first)
       - uses: hashicorp/setup-terraform@v3
@@ -65,11 +76,12 @@ jobs:
             -target=aws_iam_role_policy.lambda_policy
         working-directory: terraform
 
-      # Now upload real zip to S3 (bucket exists now)
-      - name: Upload lambda.zip to S3
+      # Now upload real zip + layer to S3 (bucket exists now)
+      - name: Upload lambda.zip and layer to S3
         run: |
           BUCKET=$(cd terraform && terraform output -raw lambda_bucket_name)
           aws s3 cp lambda.zip s3://$BUCKET/lambda.zip
+          aws s3 cp dependencies-layer.zip s3://$BUCKET/dependencies-layer.zip
 
       # Now apply everything including Lambda (zip is in S3)
       - name: Terraform Apply — full
@@ -105,9 +117,9 @@ jobs:
 
       - name: Build and deploy lambda.zip
         run: |
-          pip install -r requirements.txt -t package/ --quiet
+          mkdir -p package
           cp -r api core models main.py lambda_handler.py package/
-          cd package && zip -r ../lambda.zip . -x "*.pyc" && cd ..
+          cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
           aws s3 cp lambda.zip s3://${{ needs.terraform.outputs.lambda_bucket }}/lambda.zip
           aws lambda update-function-code \
             --function-name ${{ env.LAMBDA_FUNCTION }} \

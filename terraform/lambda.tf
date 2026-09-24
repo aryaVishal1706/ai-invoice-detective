@@ -35,6 +35,18 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
+# ── Lambda Layer — heavy dependencies ───────────────────────────────────────
+resource "aws_lambda_layer_version" "dependencies" {
+  layer_name          = "${var.project}-dependencies"
+  s3_bucket           = aws_s3_bucket.lambda_bucket.id
+  s3_key              = "dependencies-layer.zip"
+  compatible_runtimes = ["python3.11"]
+
+  lifecycle {
+    ignore_changes = [s3_key]
+  }
+}
+
 # ── Lambda Function ──────────────────────────────────────────────────────────
 resource "aws_lambda_function" "api" {
   function_name = "${var.project}-api"
@@ -47,6 +59,7 @@ resource "aws_lambda_function" "api" {
   # Placeholder zip — CodePipeline will update this on first deploy
   s3_bucket = aws_s3_bucket.lambda_bucket.id
   s3_key    = "lambda.zip"
+  layers    = [aws_lambda_layer_version.dependencies.arn]
 
   environment {
     variables = {
