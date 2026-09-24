@@ -8,16 +8,6 @@ Automatically detects suspicious invoices before payment is approved using Rule 
 
 ---
 
-## 🌐 Live Demo
-
-| | URL |
-|---|---|
-| **Frontend** | http://ai-invoice-detective-frontend-723146859876.s3-website.ap-south-1.amazonaws.com |
-| **API** | https://3pztu9blma.execute-api.ap-south-1.amazonaws.com |
-| **API Docs** | https://3pztu9blma.execute-api.ap-south-1.amazonaws.com/docs |
-
----
-
 ## 📸 Screenshots
 
 ### Analyze Invoice Page
