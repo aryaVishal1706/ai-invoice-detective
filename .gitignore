@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Environment
+.env
+venv/
+.venv/
+env/
+
+# Model artifacts (large binary files)
+models/trained/*.pkl
+
+# Data (sensitive)
+data/processed/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

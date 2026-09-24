@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+pydantic
+pandas
+numpy
+scikit-learn
+scipy
+rapidfuzz
+pdfplumber
+pytesseract
+python-multipart
+faker
+python-dotenv
+groq
+mangum
+boto3
