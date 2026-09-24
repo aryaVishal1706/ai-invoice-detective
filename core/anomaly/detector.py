@@ -1,16 +1,14 @@
-import pandas as pd
-import numpy as np
 import pickle
 import os
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import LabelEncoder
+import json
 
 MODEL_PATH = "models/trained/isolation_forest.pkl"
 DATASET_PATH = "data/raw/invoice_dataset.csv"
 
 
-def _build_features(df: pd.DataFrame) -> pd.DataFrame:
+def _build_features(df):
     """Extract numeric features from invoice dataframe for IsolationForest."""
+    import pandas as pd
     df = df.copy()
     df["invoice_date"]    = pd.to_datetime(df["invoice_date"])
     df["submission_date"] = pd.to_datetime(df["submission_date"])
@@ -36,6 +34,9 @@ def _build_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def train_model():
     """Train IsolationForest on normal invoices from synthetic dataset and save model."""
+    import pandas as pd
+    import numpy as np
+    from sklearn.ensemble import IsolationForest
     os.makedirs("models/trained", exist_ok=True)
 
     df = pd.read_csv(DATASET_PATH)
@@ -88,11 +89,9 @@ def score_invoice(invoice: dict, artifact: dict, vendor_stats: dict) -> int:
     Score invoice — calls ML Lambda if running on AWS, runs locally otherwise.
     Returns anomaly score 0–100.
     """
-    import os
     ml_function = os.environ.get("ML_LAMBDA_FUNCTION")
 
     if ml_function:
-        # Running on AWS — invoke ML Lambda
         import boto3, json
         client   = boto3.client("lambda", region_name="ap-south-1")
         response = client.invoke(
@@ -103,9 +102,12 @@ def score_invoice(invoice: dict, artifact: dict, vendor_stats: dict) -> int:
         result = json.loads(response["Payload"].read())
         return result.get("score", 50)
 
-    # Running locally — score directly
-    vendor        = invoice["vendor_name"]
-    amount        = invoice["amount"]
+    # Running locally — use pandas/numpy directly
+    import pandas as pd
+    import numpy as np
+
+    vendor         = invoice["vendor_name"]
+    amount         = invoice["amount"]
     vendor_avg_amt = vendor_stats.get(vendor, {}).get("avg_amount", amount)
     vendor_std_amt = vendor_stats.get(vendor, {}).get("std_amount", 1) or 1
     amount_vs_avg  = amount / vendor_avg_amt if vendor_avg_amt > 0 else 1.0
@@ -118,9 +120,7 @@ def score_invoice(invoice: dict, artifact: dict, vendor_stats: dict) -> int:
         is_weekend = 1 if inv_dt.weekday() >= 5 else 0
         is_future  = 1 if inv_dt > pd.Timestamp.today() else 0
     except Exception:
-        submission_lag = 0
-        is_weekend = 0
-        is_future  = 0
+        submission_lag = is_weekend = is_future = 0
 
     expected_tax  = amount * 0.18
     tax_deviation = abs(invoice.get("tax_amount", expected_tax) - expected_tax) / max(expected_tax, 1)
@@ -128,45 +128,10 @@ def score_invoice(invoice: dict, artifact: dict, vendor_stats: dict) -> int:
     missing_gstin = 1 if not invoice.get("vendor_gstin") else 0
     is_round      = 1 if amount % 10000 == 0 else 0
 
-    model      = artifact["model"]
-    score_min  = artifact["score_min"]
-    score_max  = artifact["score_max"]
-
-    features = pd.DataFrame([[
-        amount, submission_lag, amount_vs_avg, amount_zscore,
-        vendor_stats.get(vendor, {}).get("monthly_freq", 1),
-        tax_deviation, is_weekend, is_future, missing_po, missing_gstin, is_round
-    ]], columns=["amount", "submission_lag", "amount_vs_vendor_avg", "amount_zscore",
-                 "vendor_monthly_freq", "tax_deviation", "is_weekend", "is_future",
-                 "missing_po", "missing_gstin", "is_round"])
-
-    raw_score   = model.decision_function(features)[0]
+    model       = artifact["model"]
+    score_min   = artifact["score_min"]
+    score_max   = artifact["score_max"]
     score_range = score_max - score_min if score_max != score_min else 1
-    return int(np.clip((1 - (raw_score - score_min) / score_range) * 100, 0, 100))
-    vendor = invoice["vendor_name"]
-    amount = invoice["amount"]
-
-    vendor_avg_amt = vendor_stats.get(vendor, {}).get("avg_amount", amount)
-    vendor_std_amt = vendor_stats.get(vendor, {}).get("std_amount", 1) or 1
-    amount_vs_avg  = amount / vendor_avg_amt if vendor_avg_amt > 0 else 1.0
-    amount_zscore  = (amount - vendor_avg_amt) / vendor_std_amt
-
-    try:
-        inv_dt = pd.to_datetime(invoice["invoice_date"])
-        sub_dt = pd.to_datetime(invoice["submission_date"])
-        submission_lag = (sub_dt - inv_dt).days
-        is_weekend = 1 if inv_dt.weekday() >= 5 else 0
-        is_future  = 1 if inv_dt > pd.Timestamp.today() else 0
-    except Exception:
-        submission_lag = 0
-        is_weekend = 0
-        is_future  = 0
-
-    expected_tax  = amount * 0.18
-    tax_deviation = abs(invoice.get("tax_amount", expected_tax) - expected_tax) / max(expected_tax, 1)
-    missing_po    = 1 if not invoice.get("po_number") else 0
-    missing_gstin = 1 if not invoice.get("vendor_gstin") else 0
-    is_round      = 1 if amount % 10000 == 0 else 0
 
     features = pd.DataFrame([[
         amount, submission_lag, amount_vs_avg, amount_zscore,
@@ -176,15 +141,13 @@ def score_invoice(invoice: dict, artifact: dict, vendor_stats: dict) -> int:
                  "vendor_monthly_freq", "tax_deviation", "is_weekend", "is_future",
                  "missing_po", "missing_gstin", "is_round"])
 
-    # Normalize: lower decision_function = more anomalous → invert to 0-100
     raw_score = model.decision_function(features)[0]
-    score_range = score_max - score_min if score_max != score_min else 1
-    anomaly_score = int(np.clip((1 - (raw_score - score_min) / score_range) * 100, 0, 100))
-    return anomaly_score
+    return int(np.clip((1 - (raw_score - score_min) / score_range) * 100, 0, 100))
 
 
 def build_vendor_stats(csv_path: str = DATASET_PATH) -> dict:
     """Build per-vendor baseline stats from historical invoice data."""
+    import pandas as pd
     df = pd.read_csv(csv_path)
     normal = df[df["is_anomaly"] == 0]
 

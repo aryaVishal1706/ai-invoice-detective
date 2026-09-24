@@ -8,8 +8,10 @@ from core.anomaly.blacklist import load_blacklist, check_blacklist
 
 router = APIRouter(prefix="/invoice", tags=["Invoice"])
 
-_artifact     = load_model()
-_vendor_stats = build_vendor_stats()
+# On Lambda, ML scoring is delegated to ML Lambda — skip local model load
+_IS_LAMBDA    = bool(os.environ.get("ML_LAMBDA_FUNCTION"))
+_artifact     = None if _IS_LAMBDA else load_model()
+_vendor_stats = {} if _IS_LAMBDA else build_vendor_stats()
 load_blacklist(os.getenv("BLACKLIST_PATH", ""))
 
 # DynamoDB client (only on Lambda)
