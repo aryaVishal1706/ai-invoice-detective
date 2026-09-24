@@ -34,13 +34,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Build lambda.zip — API code + lightweight dependencies
+      # Build lambda.zip — API code + lightweight dependencies (Linux x86_64)
       - name: Build lambda.zip (API code only)
         run: |
           mkdir -p package
           pip install fastapi mangum groq rapidfuzz pydantic \
             python-dotenv boto3 python-multipart uvicorn \
-            -t package/ --quiet
+            -t package/ --quiet \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.11 \
+            --only-binary=:all:
           cp -r api core models main.py lambda_handler.py package/
           cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
           echo "lambda.zip: $(du -sh lambda.zip | cut -f1)"
@@ -137,11 +141,15 @@ jobs:
 
       - name: Build and deploy both Lambdas
         run: |
-          # API Lambda — lightweight deps + code
+          # API Lambda — lightweight deps + code (Linux x86_64)
           mkdir -p package
           pip install fastapi mangum groq rapidfuzz pydantic \
             python-dotenv boto3 python-multipart uvicorn \
-            -t package/ --quiet
+            -t package/ --quiet \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 3.11 \
+            --only-binary=:all:
           cp -r api core models main.py lambda_handler.py package/
           cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
 

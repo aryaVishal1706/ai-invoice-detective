@@ -1,4 +1,3 @@
-import pandas as pd
 from rapidfuzz import process, fuzz
 
 _blacklist: list[str] = []
@@ -8,7 +7,8 @@ def load_blacklist(csv_path: str):
     """Load vendor names from client-provided CSV or default WB sanctions list."""
     global _blacklist
     try:
-        df = pd.read_csv(csv_path)
+        import pandas as pd
+        df  = pd.read_csv(csv_path)
         col = "SUPP_NAME" if "SUPP_NAME" in df.columns else df.columns[0]
         _blacklist = df[col].dropna().str.upper().tolist()
         print(f"Blacklist loaded: {len(_blacklist)} vendors from {csv_path}")

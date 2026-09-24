@@ -99,7 +99,11 @@ def analyze_invoice(invoice: InvoiceInput):
     # Save to DynamoDB (Lambda) or in-memory (local)
     table = _get_table()
     if table:
-        table.put_item(Item=json.loads(report.model_dump_json()))
+        from decimal import Decimal
+        import json
+        # Convert floats to Decimal for DynamoDB
+        item = json.loads(report.model_dump_json(), parse_float=Decimal)
+        table.put_item(Item=item)
     else:
         _reports[invoice.invoice_id] = report
 
