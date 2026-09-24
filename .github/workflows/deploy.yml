@@ -10,7 +10,7 @@ env:
   LAMBDA_FUNCTION: ai-invoice-detective-api
 
 jobs:
-  # ── Step 1: Terraform — create/update AWS infra ───────────────────────────
+  # ── Step 1: Terraform + initial Lambda deploy ─────────────────────────────
   terraform:
     name: 1. Terraform — AWS Infrastructure
     runs-on: ubuntu-latest
@@ -29,28 +29,50 @@ jobs:
           aws-secret-access-key: ${{ secrets.SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Build real lambda.zip BEFORE terraform runs
+      - name: Build lambda.zip
+        run: |
+          pip install -r requirements.txt -t package/ --quiet
+          cp -r api core models main.py lambda_handler.py package/
+          cd package && zip -r ../lambda.zip . -x "*.pyc" && cd ..
+
+      # Upload zip to S3 (bucket may not exist yet — terraform creates it first)
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-
-      - name: Upload placeholder zip (only if lambda.zip missing in S3)
-        run: |
-          BUCKET="ai-invoice-detective-lambda-$(aws sts get-caller-identity --query Account --output text)"
-          if ! aws s3 ls s3://$BUCKET/lambda.zip 2>/dev/null; then
-            mkdir -p lambda_placeholder
-            echo 'def handler(event, context): return {"statusCode": 200}' > lambda_placeholder/lambda_handler.py
-            cd lambda_placeholder && zip -r ../placeholder.zip . && cd ..
-            aws s3 cp placeholder.zip s3://$BUCKET/lambda.zip
-            echo "Placeholder uploaded"
-          else
-            echo "lambda.zip already exists — skipping"
-          fi
 
       - name: Terraform Init
         run: terraform init
         working-directory: terraform
 
-      - name: Terraform Apply
+      # Apply only infra except Lambda first (S3, IAM, DynamoDB, API GW)
+      - name: Terraform Apply — infra only
+        run: |
+          terraform apply -auto-approve \
+            -var="groq_api_key=${{ secrets.GROQ_API_KEY }}" \
+            -target=aws_s3_bucket.lambda_bucket \
+            -target=aws_s3_bucket.model_bucket \
+            -target=aws_s3_bucket.frontend_bucket \
+            -target=aws_s3_bucket_website_configuration.frontend \
+            -target=aws_s3_bucket_public_access_block.frontend \
+            -target=aws_s3_bucket_policy.frontend_public \
+            -target=aws_dynamodb_table.reports \
+            -target=aws_iam_role.lambda_role \
+            -target=aws_iam_role_policy.lambda_policy
+        working-directory: terraform
+
+      # Now upload real zip to S3 (bucket exists now)
+      - name: Upload lambda.zip to S3
+        run: |
+          BUCKET=$(cd terraform && terraform output -raw lambda_bucket_name)
+          aws s3 cp lambda.zip s3://$BUCKET/lambda.zip
+
+      # Now apply everything including Lambda (zip is in S3)
+      - name: Terraform Apply — full
         run: terraform apply -auto-approve -var="groq_api_key=${{ secrets.GROQ_API_KEY }}"
         working-directory: terraform
 
@@ -58,13 +80,13 @@ jobs:
         id: outputs
         run: |
           cd terraform
-          echo "lambda_bucket=$(terraform output -raw lambda_bucket_name)"   >> $GITHUB_OUTPUT
-          echo "model_bucket=$(terraform output -raw model_bucket_name)"     >> $GITHUB_OUTPUT
+          echo "lambda_bucket=$(terraform output -raw lambda_bucket_name)"     >> $GITHUB_OUTPUT
+          echo "model_bucket=$(terraform output -raw model_bucket_name)"       >> $GITHUB_OUTPUT
           echo "frontend_bucket=$(terraform output -raw frontend_bucket_name)" >> $GITHUB_OUTPUT
 
-  # ── Step 2: Deploy Backend → Lambda ──────────────────────────────────────
+  # ── Step 2: Update Lambda with latest code ────────────────────────────────
   deploy-backend:
-    name: 2. Deploy Backend → Lambda
+    name: 2. Update Lambda Code
     runs-on: ubuntu-latest
     needs: terraform
 
@@ -81,20 +103,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt -t package/
-
-      - name: Copy source files
-        run: cp -r api core models main.py lambda_handler.py package/
-
-      - name: Zip package
-        run: cd package && zip -r ../lambda.zip . && cd ..
-
-      - name: Upload zip to S3
-        run: aws s3 cp lambda.zip s3://${{ needs.terraform.outputs.lambda_bucket }}/lambda.zip
-
-      - name: Update Lambda
+      - name: Build and deploy lambda.zip
         run: |
+          pip install -r requirements.txt -t package/ --quiet
+          cp -r api core models main.py lambda_handler.py package/
+          cd package && zip -r ../lambda.zip . -x "*.pyc" && cd ..
+          aws s3 cp lambda.zip s3://${{ needs.terraform.outputs.lambda_bucket }}/lambda.zip
           aws lambda update-function-code \
             --function-name ${{ env.LAMBDA_FUNCTION }} \
             --s3-bucket ${{ needs.terraform.outputs.lambda_bucket }} \
@@ -126,13 +140,9 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build frontend
+      - name: Build and deploy frontend
         run: |
           cd frontend/frontend
           npm ci
           npm run build
-
-      - name: Sync to S3
-        run: |
-          aws s3 sync frontend/frontend/dist/ \
-            s3://${{ needs.terraform.outputs.frontend_bucket }} --delete
+          aws s3 sync dist/ s3://${{ needs.terraform.outputs.frontend_bucket }} --delete
