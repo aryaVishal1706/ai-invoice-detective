@@ -36,13 +36,23 @@ resource "aws_iam_role_policy" "lambda_policy" {
 }
 
 # ── Placeholder zip so Lambda can be created before first deploy ─────────────
+data "archive_file" "lambda_placeholder" {
+  type        = "zip"
+  output_path = "${path.module}/placeholder.zip"
+  source {
+    content  = "def handler(event, context): return {'statusCode': 200}"
+    filename = "lambda_handler.py"
+  }
+}
+
 resource "aws_s3_object" "lambda_placeholder" {
-  bucket  = aws_s3_bucket.lambda_bucket.id
-  key     = "lambda.zip"
-  content = "placeholder"
+  bucket = aws_s3_bucket.lambda_bucket.id
+  key    = "lambda.zip"
+  source = data.archive_file.lambda_placeholder.output_path
+  etag   = data.archive_file.lambda_placeholder.output_md5
 
   lifecycle {
-    ignore_changes = [content, etag]   # don't overwrite after real deploy
+    ignore_changes = [etag, source]   # don't overwrite after real deploy
   }
 }
 
