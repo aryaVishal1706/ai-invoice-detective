@@ -34,10 +34,13 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Build lambda.zip — code only (no heavy deps)
+      # Build lambda.zip — API code + lightweight dependencies
       - name: Build lambda.zip (API code only)
         run: |
           mkdir -p package
+          pip install fastapi mangum groq rapidfuzz pydantic \
+            python-dotenv boto3 python-multipart uvicorn \
+            -t package/ --quiet
           cp -r api core models main.py lambda_handler.py package/
           cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
           echo "lambda.zip: $(du -sh lambda.zip | cut -f1)"
@@ -134,12 +137,15 @@ jobs:
 
       - name: Build and deploy both Lambdas
         run: |
-          # API Lambda (code only — tiny)
+          # API Lambda — lightweight deps + code
           mkdir -p package
+          pip install fastapi mangum groq rapidfuzz pydantic \
+            python-dotenv boto3 python-multipart uvicorn \
+            -t package/ --quiet
           cp -r api core models main.py lambda_handler.py package/
           cd package && zip -r ../lambda.zip . -x "*.pyc" -x "*/__pycache__/*" && cd ..
 
-          # ML Lambda (scikit-learn + ml code)
+          # ML Lambda — scikit-learn + ml code only
           mkdir -p ml_package
           pip install scikit-learn pandas numpy -t ml_package/ --quiet
           cp ml_lambda_handler.py ml_package/
