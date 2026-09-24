@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  AWS_REGION:      ap-south-1
-  LAMBDA_FUNCTION: ai-invoice-detective-api
+  AWS_REGION:         ap-south-1
+  LAMBDA_FUNCTION:    ai-invoice-detective-api
+  ML_LAMBDA_FUNCTION: ai-invoice-detective-ml
 
 jobs:
   # ── Step 1: Terraform + initial Lambda deploy ─────────────────────────────
@@ -153,7 +154,7 @@ jobs:
             --s3-bucket $BUCKET --s3-key lambda.zip
 
           aws lambda update-function-code \
-            --function-name ${{ env.LAMBDA_FUNCTION }}-ml \
+            --function-name ${{ env.ML_LAMBDA_FUNCTION }} \
             --s3-bucket $BUCKET --s3-key ml_lambda.zip
 
       - name: Upload ML model
