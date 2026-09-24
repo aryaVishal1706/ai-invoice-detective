@@ -37,20 +37,22 @@ jobs:
         run: terraform init
         working-directory: terraform
 
-      - name: Import existing resources (safe to run — skips if not exists)
+      - name: Import existing AWS resources into Terraform state
         working-directory: terraform
-        env:
-          AWS_ACCOUNT_ID: ${{ steps.identity.outputs.account_id }}
         run: |
           ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
           PROJECT="ai-invoice-detective"
 
-          terraform import aws_s3_bucket.lambda_bucket   ${PROJECT}-lambda-${ACCOUNT}   2>/dev/null || true
-          terraform import aws_s3_bucket.model_bucket    ${PROJECT}-models-${ACCOUNT}   2>/dev/null || true
-          terraform import aws_s3_bucket.frontend_bucket ${PROJECT}-frontend-${ACCOUNT} 2>/dev/null || true
-          terraform import aws_dynamodb_table.reports    ${PROJECT}-reports             2>/dev/null || true
-          terraform import aws_iam_role.lambda_role      ${PROJECT}-lambda-role         2>/dev/null || true
-
+          # Import only if not already in state (|| true prevents failure if already imported)
+          terraform state show aws_s3_bucket.lambda_bucket      2>/dev/null || terraform import aws_s3_bucket.lambda_bucket      ${PROJECT}-lambda-${ACCOUNT}                          || true
+          terraform state show aws_s3_bucket.model_bucket       2>/dev/null || terraform import aws_s3_bucket.model_bucket       ${PROJECT}-models-${ACCOUNT}                          || true
+          terraform state show aws_s3_bucket.frontend_bucket    2>/dev/null || terraform import aws_s3_bucket.frontend_bucket    ${PROJECT}-frontend-${ACCOUNT}                        || true
+          terraform state show aws_dynamodb_table.reports       2>/dev/null || terraform import aws_dynamodb_table.reports       ${PROJECT}-reports                                    || true
+          terraform state show aws_iam_role.lambda_role         2>/dev/null || terraform import aws_iam_role.lambda_role         ${PROJECT}-lambda-role                                || true
+          terraform state show aws_iam_role_policy.lambda_policy 2>/dev/null || \
+            POLICY_NAME=$(aws iam list-role-policies --role-name ${PROJECT}-lambda-role --query 'PolicyNames[0]' --output text) && \
+            terraform import aws_iam_role_policy.lambda_policy ${PROJECT}-lambda-role:${POLICY_NAME} || true
+          terraform state show aws_lambda_function.api          2>/dev/null || terraform import aws_lambda_function.api          ${PROJECT}-api                                        || true
       - name: Terraform Apply
         run: terraform apply -auto-approve -var="groq_api_key=${{ secrets.GROQ_API_KEY }}"
         working-directory: terraform
