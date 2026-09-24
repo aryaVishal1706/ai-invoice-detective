@@ -1,9 +1,14 @@
-variable "region"       { default = "ap-south-1" }
-variable "project"      { default = "ai-invoice-detective" }
-variable "github_owner" { default = "aryaVishal1706" }
-variable "github_repo"  { default = "ai-invoice-detective" }
-variable "github_branch"{ default = "main" }
+variable "region" {
+  default     = "ap-south-1"
+  description = "AWS region — Mumbai"
+}
+
+variable "project" {
+  default     = "ai-invoice-detective"
+  description = "Project name — used as prefix for all AWS resources"
+}
+
 variable "groq_api_key" {
-  description = "Groq API key — set via: terraform apply -var='groq_api_key=YOUR_KEY'"
+  description = "Groq API key — passed via GitHub Secret GROQ_API_KEY"
   sensitive   = true
 }

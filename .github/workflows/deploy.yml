@@ -1,0 +1,125 @@
+name: Deploy — Full Stack (Infra + Code)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION:      ap-south-1
+  LAMBDA_FUNCTION: ai-invoice-detective-api
+
+jobs:
+  # ── Step 1: Terraform — create/update AWS infra ───────────────────────────
+  terraform:
+    name: 1. Terraform — AWS Infrastructure
+    runs-on: ubuntu-latest
+
+    outputs:
+      lambda_bucket:   ${{ steps.outputs.outputs.lambda_bucket }}
+      model_bucket:    ${{ steps.outputs.outputs.model_bucket }}
+      frontend_bucket: ${{ steps.outputs.outputs.frontend_bucket }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var="groq_api_key=${{ secrets.GROQ_API_KEY }}"
+        working-directory: terraform
+
+      - name: Get bucket names
+        id: outputs
+        run: |
+          cd terraform
+          echo "lambda_bucket=$(terraform output -raw lambda_bucket_name 2>/dev/null || aws s3api list-buckets --query "Buckets[?contains(Name,'ai-invoice-detective-lambda')].Name" --output text)" >> $GITHUB_OUTPUT
+          echo "model_bucket=$(terraform output -raw model_bucket_name 2>/dev/null || aws s3api list-buckets --query "Buckets[?contains(Name,'ai-invoice-detective-models')].Name" --output text)" >> $GITHUB_OUTPUT
+          echo "frontend_bucket=$(terraform output -raw frontend_bucket_name 2>/dev/null || aws s3api list-buckets --query "Buckets[?contains(Name,'ai-invoice-detective-frontend')].Name" --output text)" >> $GITHUB_OUTPUT
+
+  # ── Step 2: Deploy Backend → Lambda ──────────────────────────────────────
+  deploy-backend:
+    name: 2. Deploy Backend → Lambda
+    runs-on: ubuntu-latest
+    needs: terraform       # waits for terraform to finish
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -t package/
+
+      - name: Copy source files
+        run: cp -r api core models main.py lambda_handler.py package/
+
+      - name: Zip package
+        run: cd package && zip -r ../lambda.zip . && cd ..
+
+      - name: Upload zip to S3
+        run: aws s3 cp lambda.zip s3://${{ needs.terraform.outputs.lambda_bucket }}/lambda.zip
+
+      - name: Update Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ env.LAMBDA_FUNCTION }} \
+            --s3-bucket ${{ needs.terraform.outputs.lambda_bucket }} \
+            --s3-key lambda.zip
+
+      - name: Upload ML model
+        run: |
+          if [ -f models/trained/isolation_forest.pkl ]; then
+            aws s3 cp models/trained/isolation_forest.pkl \
+              s3://${{ needs.terraform.outputs.model_bucket }}/isolation_forest.pkl
+          fi
+
+  # ── Step 3: Deploy Frontend → S3 ─────────────────────────────────────────
+  deploy-frontend:
+    name: 3. Deploy Frontend → S3
+    runs-on: ubuntu-latest
+    needs: terraform       # waits for terraform to finish
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        run: |
+          cd frontend/frontend
+          npm ci
+          npm run build
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync frontend/frontend/dist/ \
+            s3://${{ needs.terraform.outputs.frontend_bucket }} --delete

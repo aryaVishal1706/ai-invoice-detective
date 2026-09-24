@@ -362,34 +362,45 @@ All resources created by Terraform in `ap-south-1` (Mumbai).
 
 ---
 
-## 9. Deployment — Manual
+## 9. Deployment — GitHub Actions
 
-No CI/CD pipeline (CodePipeline costs $1/month — not in free tier after 30 days).
-Deploy manually when needed using AWS CLI.
+Two workflows in `.github/workflows/`:
 
-### Deploy Backend (Lambda)
-```cmd
-pip install -r requirements.txt -t package/
-xcopy api package\api\ /E /I /Q
-xcopy core package\core\ /E /I /Q
-xcopy models package\models\ /E /I /Q
-copy main.py package\ && copy lambda_handler.py package\
-cd package && zip -r ../lambda.zip . && cd ..
-aws s3 cp lambda.zip s3://ai-invoice-detective-lambda-{account}/lambda.zip
-aws lambda update-function-code --function-name ai-invoice-detective-api --s3-bucket ai-invoice-detective-lambda-{account} --s3-key lambda.zip
+| Workflow | File | Triggers |
+|---|---|---|
+| Terraform (infra) | `terraform.yml` | Push to `terraform/` OR manual button |
+| Deploy code | `deploy.yml` | Push to `api/`, `core/`, `frontend/` OR manual button |
+
+### One-Time Setup — Add GitHub Secrets
+
+Go to: `GitHub repo → Settings → Secrets and variables → Actions → New secret`
+
+| Secret Name | Value |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Your AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS secret key |
+| `GROQ_API_KEY` | Your Groq API key |
+
+### How to Deploy
+
+**First time — create AWS infra:**
+```
+GitHub repo → Actions → "Terraform — Deploy Infrastructure" → Run workflow
 ```
 
-### Deploy Frontend (S3)
-```cmd
-cd frontend\frontend
-npm run build
-aws s3 sync dist/ s3://ai-invoice-detective-frontend-{account} --delete
+**Deploy code changes — push to main or click button:**
+```
+GitHub repo → Actions → "Deploy — Lambda + S3 Frontend" → Run workflow
 ```
 
-### Upload ML Model
-```cmd
-aws s3 cp models/trained/isolation_forest.pkl s3://ai-invoice-detective-models-{account}/isolation_forest.pkl
-```
+### What Each Workflow Does
+
+**terraform.yml:** `terraform init` + `terraform apply` → creates all AWS resources
+
+**deploy.yml (two parallel jobs):**
+- Backend: pip install → zip → S3 → Lambda update
+- Frontend: npm build → S3 website sync
+- Also uploads `isolation_forest.pkl` to model bucket
 
 ---
 

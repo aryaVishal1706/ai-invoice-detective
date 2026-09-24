@@ -50,3 +50,15 @@ resource "aws_s3_bucket_policy" "frontend_public" {
 output "frontend_url" {
   value = "http://${aws_s3_bucket_website_configuration.frontend.website_endpoint}"
 }
+
+output "lambda_bucket_name" {
+  value = aws_s3_bucket.lambda_bucket.id
+}
+
+output "model_bucket_name" {
+  value = aws_s3_bucket.model_bucket.id
+}
+
+output "frontend_bucket_name" {
+  value = aws_s3_bucket.frontend_bucket.id
+}
