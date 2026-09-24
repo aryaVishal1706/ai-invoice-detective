@@ -33,6 +33,19 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Upload placeholder zip (only if lambda.zip missing in S3)
+        run: |
+          BUCKET="ai-invoice-detective-lambda-$(aws sts get-caller-identity --query Account --output text)"
+          if ! aws s3 ls s3://$BUCKET/lambda.zip 2>/dev/null; then
+            mkdir -p lambda_placeholder
+            echo 'def handler(event, context): return {"statusCode": 200}' > lambda_placeholder/lambda_handler.py
+            cd lambda_placeholder && zip -r ../placeholder.zip . && cd ..
+            aws s3 cp placeholder.zip s3://$BUCKET/lambda.zip
+            echo "Placeholder uploaded"
+          else
+            echo "lambda.zip already exists — skipping"
+          fi
+
       - name: Terraform Init
         run: terraform init
         working-directory: terraform
