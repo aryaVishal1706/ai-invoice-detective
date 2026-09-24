@@ -37,22 +37,6 @@ jobs:
         run: terraform init
         working-directory: terraform
 
-      - name: Import existing AWS resources into Terraform state
-        working-directory: terraform
-        run: |
-          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-          PROJECT="ai-invoice-detective"
-
-          # Import only if not already in state (|| true prevents failure if already imported)
-          terraform state show aws_s3_bucket.lambda_bucket      2>/dev/null || terraform import aws_s3_bucket.lambda_bucket      ${PROJECT}-lambda-${ACCOUNT}                          || true
-          terraform state show aws_s3_bucket.model_bucket       2>/dev/null || terraform import aws_s3_bucket.model_bucket       ${PROJECT}-models-${ACCOUNT}                          || true
-          terraform state show aws_s3_bucket.frontend_bucket    2>/dev/null || terraform import aws_s3_bucket.frontend_bucket    ${PROJECT}-frontend-${ACCOUNT}                        || true
-          terraform state show aws_dynamodb_table.reports       2>/dev/null || terraform import aws_dynamodb_table.reports       ${PROJECT}-reports                                    || true
-          terraform state show aws_iam_role.lambda_role         2>/dev/null || terraform import aws_iam_role.lambda_role         ${PROJECT}-lambda-role                                || true
-          terraform state show aws_iam_role_policy.lambda_policy 2>/dev/null || \
-            POLICY_NAME=$(aws iam list-role-policies --role-name ${PROJECT}-lambda-role --query 'PolicyNames[0]' --output text) && \
-            terraform import aws_iam_role_policy.lambda_policy ${PROJECT}-lambda-role:${POLICY_NAME} || true
-          terraform state show aws_lambda_function.api          2>/dev/null || terraform import aws_lambda_function.api          ${PROJECT}-api                                        || true
       - name: Terraform Apply
         run: terraform apply -auto-approve -var="groq_api_key=${{ secrets.GROQ_API_KEY }}"
         working-directory: terraform
@@ -61,15 +45,15 @@ jobs:
         id: outputs
         run: |
           cd terraform
-          echo "lambda_bucket=$(terraform output -raw lambda_bucket_name 2>/dev/null || aws s3api list-buckets --query "Buckets[?contains(Name,'ai-invoice-detective-lambda')].Name" --output text)" >> $GITHUB_OUTPUT
-          echo "model_bucket=$(terraform output -raw model_bucket_name 2>/dev/null || aws s3api list-buckets --query "Buckets[?contains(Name,'ai-invoice-detective-models')].Name" --output text)" >> $GITHUB_OUTPUT
-          echo "frontend_bucket=$(terraform output -raw frontend_bucket_name 2>/dev/null || aws s3api list-buckets --query "Buckets[?contains(Name,'ai-invoice-detective-frontend')].Name" --output text)" >> $GITHUB_OUTPUT
+          echo "lambda_bucket=$(terraform output -raw lambda_bucket_name)"   >> $GITHUB_OUTPUT
+          echo "model_bucket=$(terraform output -raw model_bucket_name)"     >> $GITHUB_OUTPUT
+          echo "frontend_bucket=$(terraform output -raw frontend_bucket_name)" >> $GITHUB_OUTPUT
 
   # ── Step 2: Deploy Backend → Lambda ──────────────────────────────────────
   deploy-backend:
     name: 2. Deploy Backend → Lambda
     runs-on: ubuntu-latest
-    needs: terraform       # waits for terraform to finish
+    needs: terraform
 
     steps:
       - uses: actions/checkout@v4
@@ -114,7 +98,7 @@ jobs:
   deploy-frontend:
     name: 3. Deploy Frontend → S3
     runs-on: ubuntu-latest
-    needs: terraform       # waits for terraform to finish
+    needs: terraform
 
     steps:
       - uses: actions/checkout@v4
